@@ -2,6 +2,8 @@
 
 Mac 桌面悬浮电子宠物——一只会跑、会跳、会撒娇的萨摩耶小狗，集成 Claude Code 状态联动 + AI 对话。
 
+![demo](demo/idle.gif)
+
 ---
 
 ## 功能
