@@ -1,0 +1,5 @@
+{
+  "baseUrl": "https://你的中转地址",
+  "authToken": "sk-你的密钥",
+  "modelName": "qwen3.8-max-preview"
+}

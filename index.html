@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>萨摩耶宠物</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:transparent; overflow:hidden; user-select:none; }
+  body { cursor:grab; position:relative; }
+  body:active { cursor:grabbing; }
+
+  .anim-wrap {
+    position:absolute; bottom:6px; left:50%; transform:translateX(-50%);
+    width:170px; height:170px;
+  }
+  .anim-frame {
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    object-fit:contain; opacity:0; transition:opacity 0.25s;
+    filter:drop-shadow(0 4px 14px rgba(0,0,0,0.12));
+    pointer-events:none;
+  }
+  .anim-frame.active { opacity:1; }
+
+  #dragHint {
+    position:absolute; bottom:50%; left:50%; transform:translate(-50%, 50%);
+    font-size:10px; color:rgba(0,0,0,0.45); pointer-events:none; z-index:3;
+    opacity:0; transition:opacity 0.3s;
+    font-family:-apple-system,"PingFang SC",sans-serif; white-space:nowrap;
+    background:rgba(255,255,255,0.8); padding:3px 8px; border-radius:10px;
+  }
+  #dragHint.show { opacity:1; }
+
+  #effects {
+    position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:5;
+  }
+  .particle {
+    position:absolute; pointer-events:none;
+    animation:floatUp 2s cubic-bezier(0.25,0.46,0.45,0.94) forwards;
+  }
+  @keyframes floatUp {
+    0% { opacity:1; transform:translateY(0) scale(1); }
+    100% { opacity:0; transform:translateY(-70px) translateX(var(--dx)) scale(0.2); }
+  }
+
+  #bubbleWrap {
+    position:absolute; top:4px; left:50%; transform:translateX(-50%);
+    opacity:0; transition:opacity 0.3s, transform 0.3s;
+    max-width:280px; z-index:10; pointer-events:none;
+    font-size:12px;
+    transform:translateX(-50%) translateY(6px);
+  }
+  #bubbleWrap.open { opacity:1; transform:translateX(-50%) translateY(0); pointer-events:auto; }
+  #bubbleInner {
+    background:#fff; border-radius:14px; padding:8px 10px;
+    box-shadow:0 3px 20px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.04);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:11px; line-height:1.5; color:#333; position:relative;
+    text-align:left;
+  }
+  #bubbleInner::after {
+    content:''; position:absolute; bottom:-7px; left:50%; transform:translateX(-50%);
+    width:0; height:0; border-left:7px solid transparent;
+    border-right:7px solid transparent; border-top:7px solid #fff;
+  }
+  #bubbleText { max-height:100px; overflow-y:auto; word-break:break-word; margin-bottom:4px; }
+  #bubbleText.thinking { color:#999; text-align:center; }
+  #bubbleRow { display:none; }
+  #bubbleRow.show { display:block; }
+  #bubbleInput {
+    width:100%; border:none; outline:none; font-size:11px; font-family:inherit; color:#333;
+    background:#f5f5f5; border-radius:8px; padding:5px 8px;
+  }
+  #bubbleInput::placeholder { color:#bbb; }
+</style>
+</head>
+<body>
+
+<div id="effects"></div>
+<div id="dragHint">👋 把我放这儿～</div>
+
+<div id="bubbleWrap">
+  <div id="bubbleInner">
+    <div id="bubbleText"></div>
+    <div id="bubbleRow">
+      <input id="bubbleInput" placeholder="回车发送..." />
+    </div>
+  </div>
+</div>
+
+<div class="anim-wrap">
+  <img class="anim-frame active" data-anim="idle" src="anim/idle.webp" />
+  <img class="anim-frame" data-anim="walk" src="anim/walk.webp" />
+  <img class="anim-frame" data-anim="jump" src="anim/jump.webp" />
+  <img class="anim-frame" data-anim="sit" src="anim/sit.webp" />
+  <img class="anim-frame" data-anim="happy" src="anim/happy.webp" />
+  <img class="anim-frame" data-anim="headTilt" src="anim/headTilt.webp" />
+  <img class="anim-frame" data-anim="pawWave" src="anim/pawWave.webp" />
+  <img class="anim-frame" data-anim="scratchEar" src="anim/scratchEar.webp" />
+  <img class="anim-frame" data-anim="sleeping" src="anim/sleeping.webp" />
+  <img class="anim-frame" data-anim="tailWag" src="anim/tailWag.webp" />
+  <img class="anim-frame" data-anim="thinking" src="anim/thinking.webp" />
+  <img class="anim-frame" data-anim="tongueOut" src="anim/tongueOut.webp" />
+  <img class="anim-frame" data-anim="drag" src="anim/drag.webp" />
+</div>
+
+<script>
+  const { ipcRenderer } = require('electron');
+
+  let currentAnim = 'idle', isLoading = false, claudeStatus = 'offline';
+  let hideTimer = null, revertTimer = null;
+  let mouseDown = false, dragStarted = false, sX = 0, sY = 0;
+
+  const allFrames = document.querySelectorAll('.anim-frame');
+
+  function switchAnim(name) {
+    if (name === currentAnim) return;
+    allFrames.forEach(el => el.classList.remove('active'));
+    const target = document.querySelector(`[data-anim="${name}"]`);
+    if (target) { target.classList.add('active'); currentAnim = name; }
+  }
+
+  function spawnParticles(type, count) {
+    const map = {
+      sparkle: ['✨','⭐','✧','🌟'],
+      heart: ['💕','💖','💗','💝'],
+      question: ['❓','❔'],
+      sleep: ['💤','😴'],
+    };
+    const items = map[type]; if (!items) return;
+    const ctr = document.getElementById('effects');
+    for (let i=0;i<count;i++) {
+      const el = document.createElement('span');
+      el.className='particle';
+      el.textContent = items[Math.floor(Math.random()*items.length)];
+      el.style.left = (20 + Math.random()*60) + '%';
+      el.style.top = (5 + Math.random()*35) + '%';
+      el.style.setProperty('--dx', (Math.random()-0.5)*50 + 'px');
+      el.style.fontSize = (14 + Math.random()*18) + 'px';
+      ctr.appendChild(el);
+      setTimeout(() => el.remove(), 2100);
+    }
+  }
+
+  function setState(state) {
+    const map = {
+      idle:'idle', walking:'walk', excited:'jump', happy:'happy',
+      love:'tailWag', thinking:'thinking', curious:'headTilt',
+      sleepy:'sleeping', surprised:'jump', sit:'sit', drag:'drag',
+      pawWave:'pawWave', scratchEar:'scratchEar', tongueOut:'tongueOut'
+    };
+    const anim = map[state] || 'idle';
+    switchAnim(anim);
+
+    if (state==='excited') spawnParticles('sparkle',8);
+    else if (state==='happy') spawnParticles('sparkle',4);
+    else if (state==='love') spawnParticles('heart',6);
+    else if (state==='thinking') spawnParticles('question',3);
+    else if (state==='sleepy') spawnParticles('sleep',3);
+  }
+
+  function showBubble(text, showInput, placeholder) {
+    clearTimeout(hideTimer);
+    const t = document.getElementById('bubbleText');
+    t.textContent = text||'';
+    t.className = text && !showInput ? '' : 'thinking';
+    document.getElementById('bubbleRow').className = showInput ? 'show' : '';
+    if (showInput) {
+      const inp = document.getElementById('bubbleInput');
+      inp.placeholder = placeholder||'跟我说点什么...';
+      inp.value = '';
+      setTimeout(() => inp.focus(), 150);
+    }
+    document.getElementById('bubbleWrap').classList.add('open');
+    if (text && !showInput) {
+      hideTimer = setTimeout(() => {
+        document.getElementById('bubbleWrap').classList.remove('open');
+      }, 25000);
+    }
+  }
+
+  function hideBubble() {
+    clearTimeout(hideTimer);
+    document.getElementById('bubbleWrap').classList.remove('open');
+  }
+
+  async function sendMessage() {
+    const inp = document.getElementById('bubbleInput');
+    const msg = inp.value.trim();
+    if (!msg||isLoading) return;
+    isLoading = true; inp.value = '';
+    setState('thinking');
+    showBubble('🐕 思考中...', false);
+    try {
+      const reply = await ipcRenderer.invoke('chat', msg);
+      setState('happy');
+      showBubble(reply, false);
+      setTimeout(() => setState('idle'), 4000);
+    } catch(e) {
+      setState('curious');
+      showBubble('汪汪，' + (e.message || '出错了') + '～再试试？', false);
+      setTimeout(() => setState('idle'), 4000);
+    } finally { isLoading = false; }
+  }
+
+  document.getElementById('bubbleInput').addEventListener('keydown', e => {
+    if (e.key==='Enter') sendMessage();
+  });
+
+  // 双击随机切换动作
+  document.addEventListener('dblclick', e => {
+    if (e.target.closest('#bubbleWrap')) return;
+    const actions = ['excited','happy','headTilt','pawWave','scratchEar','tongueOut','tailWag','sit'];
+    const action = actions[Math.floor(Math.random() * actions.length)];
+    setState(action);
+    if (revertTimer) clearTimeout(revertTimer);
+    revertTimer = setTimeout(() => setState('idle'), 4000);
+  });
+
+  document.addEventListener('mousedown', e => {
+    if (e.target.closest('#bubbleWrap')) return;
+    mouseDown = true; dragStarted = false; sX = e.screenX; sY = e.screenY;
+  });
+  window.addEventListener('mousemove', e => {
+    if (!mouseDown) return;
+    const dx = e.screenX-sX, dy = e.screenY-sY;
+    if (Math.abs(dx)>3||Math.abs(dy)>3) {
+      if (!dragStarted) {
+        dragStarted = true;
+        ipcRenderer.send('move-window', {dx:0, dy:0, start:true});
+        setState('drag');
+        document.getElementById('dragHint').classList.add('show');
+      }
+      ipcRenderer.send('move-window', {dx,dy});
+      sX = e.screenX; sY = e.screenY;
+    }
+  });
+  window.addEventListener('mouseup', e => {
+    if (!mouseDown) return;
+    const dx = Math.abs(e.screenX-sX), dy = Math.abs(e.screenY-sY);
+    mouseDown = false;
+    document.getElementById('dragHint').classList.remove('show');
+    if (currentAnim === 'drag') setState('idle');
+    if (!dragStarted && dx<3 && dy<3) {
+      if (e.target.closest('#bubbleWrap')) return;
+      showBubble('', true, '回车发送...');
+    }
+    dragStarted = false;
+  });
+
+  // 随机小动作: 每 10-25 秒随机触发挠耳朵/歪头/吐舌头
+  function randomAction() {
+    if (currentAnim !== 'idle') return;
+    const actions = ['scratchEar', 'headTilt', 'tongueOut', 'pawWave'];
+    const action = actions[Math.floor(Math.random() * actions.length)];
+    setState(action);
+    if (revertTimer) clearTimeout(revertTimer);
+    revertTimer = setTimeout(() => setState('idle'), 3000);
+  }
+  setInterval(() => {
+    if (currentAnim === 'idle' && Math.random() < 0.4) randomAction();
+  }, 12000);
+
+  ipcRenderer.on('move-state', (e,s) => {
+    if (s.moving && currentAnim==='idle') setState('walking');
+    else if (!s.moving && currentAnim==='walk') setState('idle');
+  });
+
+  ipcRenderer.on('claude-status', (e,d) => {
+    const prev = claudeStatus; claudeStatus = d.status;
+    if (prev==='offline'&&d.status!=='offline') {
+      setState('excited'); setTimeout(()=>setState('idle'), 3000);
+    }
+    if (prev!=='offline'&&d.status==='offline') setState('sleepy');
+    if (d.status==='thinking'&&currentAnim!=='thinking') setState('thinking');
+    if (d.status==='idle'&&currentAnim==='thinking') setState('idle');
+  });
+
+  setState('idle');
+
+  (async()=>{
+    const s = await ipcRenderer.invoke('get-claude-status');
+    if (s&&s.status!=='offline') {
+      claudeStatus = s.status;
+      setState('excited');
+      setTimeout(()=>setState('idle'), 2000);
+    }
+  })();
+</script>
+</body>
+</html>

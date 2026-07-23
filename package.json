@@ -1,0 +1,27 @@
+{
+  "name": "samoyed-pet",
+  "version": "2.0.0",
+  "description": "桌面悬浮萨摩耶宠物 - Claude Code联动版",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.samoyed.pet",
+    "productName": "萨摩耶宠物",
+    "mac": {
+      "target": ["dmg", "zip"]
+    },
+    "files": [
+      "main.js",
+      "index.html",
+      "config.json",
+      "anim/**"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}
